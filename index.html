@@ -34,6 +34,7 @@ h2{font-size:1.05rem;margin:22px 0 8px}
 .btn:focus-within{outline:3px solid var(--amber);outline-offset:2px}
 .ocrstat{font-size:.82rem;color:var(--mute);min-height:1.2em}
 .ocrstat.ok{color:var(--ok)}.ocrstat.bad{color:var(--warn)}
+.uncertain{border-color:var(--warn)!important;background:#fff1e8!important}
 .auto{border-color:var(--amber)!important;box-shadow:0 0 0 2px #f0a50033}
 label{display:block;font-size:.85rem;color:var(--mute);margin-top:10px}
 input[type=text],input[type=number],input[type=date],input[type=time],input[type=url],select{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff;color:var(--ink)}
@@ -122,6 +123,7 @@ summary{cursor:pointer;font-weight:600}
     </div>
   </details>
 </main>
+<script src="ocr.js" defer></script>
 <script src="vendor/tesseract.min.js" defer></script>
 <div id="toast" role="status"></div>
 
@@ -138,13 +140,13 @@ const putR=r=>tx('readwrite',s=>s.put(r)),allR=()=>tx('readonly',s=>s.getAll()),
 /* ---------- Utilitaires ---------- */
 const fmt=(n,d=0)=>Number(n).toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d});
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');clearTimeout(toast.h);toast.h=setTimeout(()=>t.classList.remove('on'),2600)}
-function compress(file,max=1500){return new Promise(ok=>{const img=new Image();img.onload=()=>{const k=Math.min(1,max/Math.max(img.width,img.height));const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(img.src);ok(c.toDataURL('image/jpeg',.72))};img.src=URL.createObjectURL(file)})}
-const imgs={A:null,B:null};
+function compress(file,max=1500,quality=.72){return new Promise(ok=>{const img=new Image();img.onload=()=>{const k=Math.min(1,max/Math.max(img.width,img.height));const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(img.src);ok(c.toDataURL('image/jpeg',quality))};img.src=URL.createObjectURL(file)})}
+const imgs={A:null,B:null};let ocrPhoto=null;
 function showPrev(k){const box=$('prev'+k);box.querySelector('img')?.remove();const im=document.createElement('img');im.src=imgs[k];im.alt=k==='A'?'Ticket thermique':'Reçu manuscrit';box.appendChild(im)}
 document.querySelectorAll('input[data-k]').forEach(inp=>inp.addEventListener('change',async e=>{
   const f=e.target.files[0];e.target.value='';if(!f)return;const k=inp.dataset.k;
-  imgs[k]=await compress(f,k==='A'?1800:1400);showPrev(k);
-  if(k==='A'){$('reread').hidden=false;runOcr()}
+  imgs[k]=await compress(f,k==='A'?2400:1400,k==='A'?.88:.72);showPrev(k);
+  if(k==='A'){if(ocrPhoto)URL.revokeObjectURL(ocrPhoto);ocrPhoto=URL.createObjectURL(f);$('reread').hidden=false;runOcr()}
 }));
 
 /* ---------- Formulaire ---------- */
@@ -157,8 +159,8 @@ function resetForm(){
   $('pu').value=localStorage.pu||DEF.pu;
   $('vehicule').value=localStorage.vehicule||'';
   ['pompe','ticket','montant','litres','solde','litresMan','pompiste'].forEach(i=>$(i).value='');
-  imgs.A=imgs.B=null;document.querySelectorAll('.prev img').forEach(i=>i.remove());
-  delete $('litres').dataset.touched;document.querySelectorAll('.auto').forEach(e=>e.classList.remove('auto'));
+  if(ocrPhoto)URL.revokeObjectURL(ocrPhoto);ocrPhoto=null;imgs.A=imgs.B=null;document.querySelectorAll('.prev img').forEach(i=>i.remove());
+  delete $('litres').dataset.touched;document.querySelectorAll('.auto,.uncertain').forEach(e=>e.classList.remove('auto','uncertain'));
   $('ocrA').textContent='';$('ocrA').className='ocrstat';$('reread').hidden=true;
 }
 // Litres = montant / prix unitaire si laissé vide
@@ -166,7 +168,9 @@ function resetForm(){
 $('litres').addEventListener('input',()=>$('litres').dataset.touched=1);
 
 $('save').addEventListener('click',async()=>{
+  if(ocrBusy)return toast('Attendez la fin de la lecture du ticket.');
   if(!imgs.A) return toast('Photographiez d’abord le ticket thermique.');
+  if(!$('date').value||!$('heure').value)return toast('Complétez la date et l’heure imprimées sur le ticket.');
   const montant=+$('montant').value,solde=$('solde').value;
   if(!montant||!$('litres').value) return toast('Montant et litres sont obligatoires.');
   const pu=+$('pu').value||0;
@@ -245,53 +249,63 @@ let workerP=null,onProg=()=>{};
 function getWorker(){
   if(typeof Tesseract==='undefined')return Promise.reject(new Error('moteur absent'));
   if(!workerP)workerP=Tesseract.createWorker('eng',1,{workerPath:'vendor/worker.min.js',corePath:'vendor/',langPath:'vendor/lang',logger:m=>onProg(m)})
-    .then(async w=>{await w.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1'});localStorage.ocrReady=1;return w})
+    .then(async w=>{await w.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1',user_defined_dpi:'300'});localStorage.ocrReady=1;return w})
     .catch(e=>{workerP=null;throw e});
   return workerP;
 }
 function loadImg(src){return new Promise((ok,ko)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=ko;i.src=src})}
-async function prep(src){ // niveaux de gris + étirement du contraste
-  const im=await loadImg(src),c=document.createElement('canvas');c.width=im.width;c.height=im.height;
-  const x=c.getContext('2d');x.drawImage(im,0,0);const d=x.getImageData(0,0,c.width,c.height),p=d.data,h=new Uint32Array(256);
-  for(let i=0;i<p.length;i+=4){const g=(p[i]*.3+p[i+1]*.59+p[i+2]*.11)|0;p[i]=g;h[g]++}
-  const n=c.width*c.height;let lo=0,hi=255,s=0;while(lo<254&&(s+=h[lo])<n*.01)lo++;s=0;while(hi>1&&(s+=h[hi])<n*.01)hi--;
-  const k=255/Math.max(1,hi-lo);for(let i=0;i<p.length;i+=4){const v=Math.max(0,Math.min(255,(p[i]-lo)*k));p[i]=p[i+1]=p[i+2]=v}
-  x.putImageData(d,0,0);return c;
+async function prep(src){
+ const im=await loadImg(src),probe=document.createElement('canvas'),k=Math.min(1,2400/Math.max(im.width,im.height));probe.width=Math.round(im.width*k);probe.height=Math.round(im.height*k);
+ const px=probe.getContext('2d',{willReadFrequently:true});px.drawImage(im,0,0,probe.width,probe.height);
+ const b=ReceiptOCR.paperBox(px.getImageData(0,0,probe.width,probe.height).data,probe.width,probe.height);
+ const box={x:b.x/k,y:b.y/k,width:b.width/k,height:b.height/k,detected:b.detected};
+ function make(area,mode){
+  const c=document.createElement('canvas'),scale=Math.min(1500/area.width,3200/area.height,3);c.width=Math.round(area.width*scale);c.height=Math.round(area.height*scale);
+  const ctx=c.getContext('2d',{willReadFrequently:true});ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';ctx.drawImage(im,area.x,area.y,area.width,area.height,0,0,c.width,c.height);
+  if(mode!=='color'){const d=ctx.getImageData(0,0,c.width,c.height);d.data.set(ReceiptOCR.enhance(d.data,c.width,c.height,mode));ctx.putImageData(d,0,0);}return c;
+ }
+ const full={x:0,y:0,width:im.width,height:im.height};
+ // Le ticket TotalEnergies comporte un logo en haut et un message en pied.
+ // Une seconde lecture complète reste disponible si le recadrage rate un champ.
+ const area=box.detected?{x:Math.round(box.x+box.width*.043),y:Math.round(box.y+box.height*.168),width:Math.round(box.width*.862),height:Math.round(box.height*.599)}:full;
+ return{color:make(area,'color'),gray:make(area,'gray'),binary:()=>make(area,'binary'),full:()=>make(full,'gray'),cropped:box.detected};
 }
-const num=s=>+String(s).replace(/[\s.,]/g,'');
-const cap=s=>s.toLowerCase().replace(/(^|[\s'-])(\p{L})/gu,(m,a,b)=>a+b.toUpperCase());
-function parseTicket(raw){
-  const T=raw.toUpperCase().replace(/\|/g,'1'),o={};let m;
-  if(m=T.match(/(\d{2})\/(\d{2})\/(20\d{2})\s+(\d{2})[:.](\d{2})/)){o.date=`${m[3]}-${m[2]}-${m[1]}`;o.heure=`${m[4]}:${m[5]}`}
-  if(m=T.match(/POMPE\s*:?\s*(\d{1,2})\b/))o.pompe=m[1];
-  if(m=T.match(/CHRONO\s*:?\s*(\d{3,5})\s*\/\s*(\d{3,5})/))o.ticket=m[1]+'/'+m[2];
-  if(m=T.match(/UNITAIRE\s*:?\s*(\d{3,4})/))o.pu=+m[1];
-  if(m=T.match(/TOTAL\s*:?\s*(\d[\d\s.,]*?)\s*CFA/))o.montant=num(m[1]);
-  if(m=T.match(/(SUPER[A-Z ]*?|GASOIL[A-Z ]*?|GAZOLE[A-Z ]*?)\s+(\d{1,3}[.,]\d{1,3})\s+(\d{3,6})/)){o.produit=cap(m[1].trim()).replace(/ Sp$/,' SP');o.litres=+m[2].replace(',','.');if(!o.montant)o.montant=+m[3]}
-  if(m=T.match(/POMPISTE\s*:?\s*([A-Z' -]{3,40})/))o.pompiste=cap(m[1].trim());
-  if(m=T.match(/SOLDE\s*:?\s*(\d[\d\s.,]*?)\s*CFA/))o.solde=num(m[1]);
-  if(o.montant&&o.pu&&(!o.litres||Math.abs(o.litres-o.montant/o.pu)/(o.montant/o.pu)>.03))o.litres=+(o.montant/o.pu).toFixed(2);
-  return o;
-}
-function applyOcr(o){
+function parseTicket(raw){return ReceiptOCR.parse(raw)}
+function applyOcr(o,snapshot){
   const map={date:'date',heure:'heure',pompe:'pompe',ticket:'ticket',pu:'pu',montant:'montant',litres:'litres',produit:'produit',pompiste:'pompiste',solde:'solde'};
   let n=0;
-  for(const k in map){if(o[k]==null||o[k]==='')continue;const el=$(map[k]);el.value=o[k];el.classList.add('auto');el.addEventListener('input',()=>el.classList.remove('auto'),{once:true});n++}
+  for(const k in map){if(o[k]==null||o[k]==='')continue;const el=$(map[k]);if(snapshot&&el.value!==snapshot[map[k]])continue;el.value=o[k];el.classList.add('auto');el.addEventListener('input',()=>el.classList.remove('auto'),{once:true});n++}
   if(o.litres!=null)$('litres').dataset.touched=1;
   return n;
 }
 let ocrBusy=false;
 async function runOcr(){
-  const st=$('ocrA');if(!imgs.A||ocrBusy)return;ocrBusy=true;st.className='ocrstat';st.textContent='Lecture du ticket…';
-  onProg=m=>{if(m.status==='recognizing text')st.textContent=`Lecture du ticket… ${Math.round(m.progress*100)} %`;else if(/loading/.test(m.status||''))st.textContent='Préparation du moteur de lecture…'};
-  try{
-    const w=await getWorker(),cv=await prep(imgs.A),{data}=await w.recognize(cv);
-    const o=parseTicket(data.text||''),n=applyOcr(o);
-    if(n>=4){st.className='ocrstat ok';st.textContent=`${n} champs lus (surlignés en jaune). Vérifiez-les avant d’enregistrer.`}
-    else if(n>0){st.className='ocrstat bad';st.textContent=`Lecture partielle (${n} champs). Complétez les champs manquants. Une photo bien droite et bien éclairée aide.`}
-    else{st.className='ocrstat bad';st.textContent='Ticket illisible. Refaites la photo (à plat, sans ombre) ou saisissez à la main.'}
-  }catch(e){st.className='ocrstat bad';st.textContent='Moteur de lecture indisponible. Ouvrez l’application une fois avec du réseau, ou saisissez à la main.'}
-  finally{ocrBusy=false}
+ const st=$('ocrA');if(!imgs.A||ocrBusy)return;ocrBusy=true;$('save').disabled=true;
+ document.querySelectorAll('input[data-k="A"]').forEach(e=>e.disabled=true);
+ const source=ocrPhoto||imgs.A,snapshot={};['date','heure','pompe','ticket','produit','pu','montant','litres','solde','pompiste'].forEach(k=>snapshot[k]=$(k).value);
+ document.querySelectorAll('.auto,.uncertain').forEach(e=>e.classList.remove('auto','uncertain'));
+ st.className='ocrstat';st.textContent='Recadrage et préparation du ticket…';let pass=0;
+ onProg=m=>{if(m.status==='recognizing text')st.textContent='Lecture '+pass+' : '+Math.round(m.progress*100)+' %';};
+ try{
+  const worker=await getWorker(),cv=await prep(source),readings=[];
+  async function read(image,mode){pass++;st.textContent='Lecture '+pass+' du ticket…';await worker.setParameters({tessedit_pageseg_mode:String(mode)});const {data}=await worker.recognize(image);readings.push({text:data.text||'',confidence:data.confidence||0,mode});return ReceiptOCR.merge(readings);}
+  await read(cv.color,6);await read(cv.gray,6);let result=await read(cv.color,11);
+  const essentials=['date','heure','ticket','montant','pu','solde'];
+  if(essentials.some(k=>result.fields[k]==null))result=await read(cv.binary(),6);
+  if(cv.cropped&&essentials.some(k=>result.fields[k]==null))result=await read(cv.full(),6);
+  if((ocrPhoto||imgs.A)!==source)return;
+  const n=applyOcr(result.fields,snapshot),labels={date:'date',heure:'heure',pompe:'pompe',ticket:'n° du ticket',produit:'produit',pu:'prix unitaire',montant:'montant',litres:'litres',solde:'solde',pompiste:'pompiste'};
+  // Une date de saisie ne doit pas être prise pour la date d’un ticket illisible.
+  for(const k of result.missing){const el=$(k);if(!el)continue;if(el.value===snapshot[k])el.value='';el.classList.add('uncertain');el.addEventListener('input',()=>el.classList.remove('uncertain'),{once:true});}
+  for(const k of result.uncertain){const el=$(k);if(el){el.classList.add('uncertain');el.addEventListener('input',()=>el.classList.remove('uncertain'),{once:true});}}
+  const notes=[];if(result.missing.length)notes.push('À compléter : '+result.missing.map(k=>labels[k]).join(', ')+'.');
+  const doubtful=result.uncertain.filter(k=>!result.missing.includes(k));if(doubtful.length)notes.push('À vérifier : '+doubtful.map(k=>labels[k]).join(', ')+'.');
+  if(result.computed.length)notes.push('Litres calculés à partir du montant et du prix unitaire.');
+  st.className='ocrstat '+(notes.length?'bad':'ok');st.textContent=n+' champs lus. '+notes.join(' ')+' Vérifiez les valeurs avant d’enregistrer.';
+ }catch(e){
+  for(const k of ['date','heure']){if($(k).value===snapshot[k])$(k).value='';$(k).classList.add('uncertain');}
+  st.className='ocrstat bad';st.textContent='Lecture indisponible. Saisissez les valeurs du ticket, dont sa date et son heure, ou reprenez une photo plus nette.';
+ }finally{ocrBusy=false;$('save').disabled=false;document.querySelectorAll('input[data-k="A"]').forEach(e=>e.disabled=false);}
 }
 $('reread').addEventListener('click',runOcr);
 // Télécharge le moteur en arrière-plan dès qu'il y a du réseau, pour qu'il marche ensuite hors ligne
