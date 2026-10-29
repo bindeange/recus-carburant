@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14313a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Reçus carburant</title>
+<style>
+:root{--ink:#14313a;--paper:#f6f5f0;--card:#fff;--line:#d9d6cb;--amber:#f0a500;--ok:#1f7a4d;--warn:#b3402a;--mute:#5d6b70}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:env(safe-area-inset-bottom,0)}
+header{position:sticky;top:0;z-index:5;background:var(--ink);color:#fff;padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 14px}
+.gauge{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.gauge div{border-left:4px solid var(--amber);padding-left:10px}
+.gauge b{display:block;font-size:1.7rem;line-height:1.1;font-variant-numeric:tabular-nums}
+.gauge span{font-size:.8rem;opacity:.75}
+.meta{margin-top:8px;font-size:.78rem;opacity:.7;display:flex;justify-content:space-between;gap:8px}
+main{max-width:640px;margin:0 auto;padding:14px 14px 40px}
+h2{font-size:1.05rem;margin:22px 0 8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.shots{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.slot{display:flex;flex-direction:column;gap:8px;min-width:0}
+.prev{border:2px dashed var(--line);border-radius:10px;min-height:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:8px;position:relative;overflow:hidden;background:#fbfaf6}
+.prev.main{border-color:var(--ink)}
+.prev img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.prev small{color:var(--mute)}
+.btns{display:grid;gap:6px}
+.btn{position:relative;display:block;text-align:center;border-radius:10px;padding:11px 8px;background:var(--ink);color:#fff;font-weight:600;cursor:pointer;margin:0;font-size:.95rem}
+.btn.alt{background:#e7e4d8;color:var(--ink)}
+.btn input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
+.btn:focus-within{outline:3px solid var(--amber);outline-offset:2px}
+.ocrstat{font-size:.82rem;color:var(--mute);min-height:1.2em}
+.ocrstat.ok{color:var(--ok)}.ocrstat.bad{color:var(--warn)}
+.auto{border-color:var(--amber)!important;box-shadow:0 0 0 2px #f0a50033}
+label{display:block;font-size:.85rem;color:var(--mute);margin-top:10px}
+input[type=text],input[type=number],input[type=date],input[type=time],input[type=url],select{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff;color:var(--ink)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+button{font:inherit;border:0;border-radius:10px;padding:12px 16px;cursor:pointer;background:var(--ink);color:#fff;font-weight:600}
+button.alt{background:#e7e4d8;color:var(--ink)}
+button.big{width:100%;margin-top:16px;padding:14px}
+button:focus-visible,input:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
+.item{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.item:last-child{border:0}
+.tag{font-size:.75rem;padding:2px 8px;border-radius:99px;white-space:nowrap;height:fit-content}
+.tag.wait{background:#fbe9c4;color:#7a5200}.tag.done{background:#d6eddf;color:var(--ok)}
+.empty{color:var(--mute);padding:8px 0}
+#toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90%;text-align:center}
+#toast.on{opacity:1}
+details{margin-top:22px}
+summary{cursor:pointer;font-weight:600}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="gauge">
+    <div><b id="hSolde">—</b><span>Reste sur la carte (FCFA)</span></div>
+    <div><b id="hLitres">—</b><span>Reste en carburant (litres)</span></div>
+  </div>
+  <div class="meta"><span id="hInfo">Aucun reçu enregistré</span><span id="hNet">…</span></div>
+</header>
+
+<main>
+  <h2>Nouveau reçu</h2>
+  <div class="card">
+    <div class="shots">
+      <section class="slot" aria-label="Ticket thermique">
+        <div class="prev main" id="prevA"><strong>Ticket thermique</strong><small>Obligatoire</small></div>
+        <div class="btns">
+          <label class="btn">Scanner le ticket<input type="file" accept="image/*" capture="environment" data-k="A"></label>
+          <label class="btn alt">Importer une photo<input type="file" accept="image/*" data-k="A"></label>
+          <button class="alt" id="reread" type="button" hidden>Relire le ticket</button>
+        </div>
+        <div class="ocrstat" id="ocrA" aria-live="polite"></div>
+      </section>
+      <section class="slot" aria-label="Reçu manuscrit">
+        <div class="prev" id="prevB"><strong>Reçu manuscrit</strong><small>Facultatif</small></div>
+        <div class="btns">
+          <label class="btn">Prendre en photo<input type="file" accept="image/*" capture="environment" data-k="B"></label>
+          <label class="btn alt">Importer une photo<input type="file" accept="image/*" data-k="B"></label>
+        </div>
+      </section>
+    </div>
+
+    <div class="row">
+      <div><label for="date">Date</label><input type="date" id="date"></div>
+      <div><label for="heure">Heure</label><input type="time" id="heure"></div>
+    </div>
+    <label for="station">Station</label><input type="text" id="station">
+    <div class="row">
+      <div><label for="pompe">N° pompe</label><input type="text" id="pompe" inputmode="numeric"></div>
+      <div><label for="ticket">N° ticket</label><input type="text" id="ticket" placeholder="1709/1740"></div>
+    </div>
+    <div class="row">
+      <div><label for="produit">Produit</label><input type="text" id="produit"></div>
+      <div><label for="pu">Prix unitaire (FCFA/L)</label><input type="number" id="pu" inputmode="decimal"></div>
+    </div>
+    <div class="row">
+      <div><label for="montant">Montant (FCFA)</label><input type="number" id="montant" inputmode="numeric"></div>
+      <div><label for="litres">Litres</label><input type="number" id="litres" inputmode="decimal" step="0.01"></div>
+    </div>
+    <label for="solde">Solde après achat (FCFA)</label><input type="number" id="solde" inputmode="numeric">
+    <div class="row">
+      <div><label for="vehicule">Véhicule</label><input type="text" id="vehicule"></div>
+      <div><label for="litresMan">Litres (reçu manuscrit)</label><input type="number" id="litresMan" inputmode="decimal" step="0.001"></div>
+    </div>
+    <label for="pompiste">Pompiste</label><input type="text" id="pompiste">
+    <button class="big" id="save">Enregistrer le reçu</button>
+  </div>
+
+  <h2>Reçus <button class="alt" id="sync" style="float:right;padding:6px 12px">Synchroniser</button></h2>
+  <div class="card" id="list"></div>
+
+  <details>
+    <summary>Réglages Google</summary>
+    <div class="card" style="margin-top:8px">
+      <label for="cfgUrl">URL du script Apps Script (se termine par /exec)</label><input type="url" id="cfgUrl">
+      <button class="alt big" id="cfgSave">Enregistrer les réglages</button>
+    </div>
+  </details>
+</main>
+<script src="vendor/tesseract.min.js" defer></script>
+<div id="toast" role="status"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const API_URL="https://script.google.com/macros/s/AKfycbxbpjUk13MH77H32GOMqgTQ6vZgZEqKhOS1VckErW3aDur30XViYNJQ0YRIYqkUJTZOxQ/exec";
+if(!localStorage.cfgUrl)localStorage.cfgUrl=API_URL;
+const DEF={station:'TotalEnergies Toumodi Centre Ville',produit:'Super SP',pu:905};
+/* ---------- IndexedDB ---------- */
+const open=()=>new Promise((ok,ko)=>{const r=indexedDB.open('recus-carburant',1);r.onupgradeneeded=()=>r.result.createObjectStore('recus',{keyPath:'id'});r.onsuccess=()=>ok(r.result);r.onerror=()=>ko(r.error)});
+async function tx(mode,fn){const db=await open();return new Promise((ok,ko)=>{const t=db.transaction('recus',mode);const q=fn(t.objectStore('recus'));t.oncomplete=()=>ok(q&&q.result);t.onerror=()=>ko(t.error)})}
+const putR=r=>tx('readwrite',s=>s.put(r)),allR=()=>tx('readonly',s=>s.getAll()),delR=id=>tx('readwrite',s=>s.delete(id));
+
+/* ---------- Utilitaires ---------- */
+const fmt=(n,d=0)=>Number(n).toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d});
+function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');clearTimeout(toast.h);toast.h=setTimeout(()=>t.classList.remove('on'),2600)}
+function compress(file,max=1500){return new Promise(ok=>{const img=new Image();img.onload=()=>{const k=Math.min(1,max/Math.max(img.width,img.height));const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(img.src);ok(c.toDataURL('image/jpeg',.72))};img.src=URL.createObjectURL(file)})}
+const imgs={A:null,B:null};
+function showPrev(k){const box=$('prev'+k);box.querySelector('img')?.remove();const im=document.createElement('img');im.src=imgs[k];im.alt=k==='A'?'Ticket thermique':'Reçu manuscrit';box.appendChild(im)}
+document.querySelectorAll('input[data-k]').forEach(inp=>inp.addEventListener('change',async e=>{
+  const f=e.target.files[0];e.target.value='';if(!f)return;const k=inp.dataset.k;
+  imgs[k]=await compress(f,k==='A'?1800:1400);showPrev(k);
+  if(k==='A'){$('reread').hidden=false;runOcr()}
+}));
+
+/* ---------- Formulaire ---------- */
+function resetForm(){
+  const n=new Date(),p=x=>String(x).padStart(2,'0');
+  $('date').value=`${n.getFullYear()}-${p(n.getMonth()+1)}-${p(n.getDate())}`;
+  $('heure').value=`${p(n.getHours())}:${p(n.getMinutes())}`;
+  $('station').value=localStorage.station||DEF.station;
+  $('produit').value=localStorage.produit||DEF.produit;
+  $('pu').value=localStorage.pu||DEF.pu;
+  $('vehicule').value=localStorage.vehicule||'';
+  ['pompe','ticket','montant','litres','solde','litresMan','pompiste'].forEach(i=>$(i).value='');
+  imgs.A=imgs.B=null;document.querySelectorAll('.prev img').forEach(i=>i.remove());
+  delete $('litres').dataset.touched;document.querySelectorAll('.auto').forEach(e=>e.classList.remove('auto'));
+  $('ocrA').textContent='';$('ocrA').className='ocrstat';$('reread').hidden=true;
+}
+// Litres = montant / prix unitaire si laissé vide
+['montant','pu'].forEach(i=>$(i).addEventListener('input',()=>{const m=+$('montant').value,p=+$('pu').value;if(m&&p&&!$('litres').dataset.touched)$('litres').value=(m/p).toFixed(2)}));
+$('litres').addEventListener('input',()=>$('litres').dataset.touched=1);
+
+$('save').addEventListener('click',async()=>{
+  if(!imgs.A) return toast('Photographiez d’abord le ticket thermique.');
+  const montant=+$('montant').value,solde=$('solde').value;
+  if(!montant||!$('litres').value) return toast('Montant et litres sont obligatoires.');
+  const pu=+$('pu').value||0;
+  const r={id:crypto.randomUUID(),date:$('date').value,heure:$('heure').value,station:$('station').value.trim(),pompe:$('pompe').value.trim(),ticket:$('ticket').value.trim(),produit:$('produit').value.trim(),pu,montant,litres:+$('litres').value,solde:solde===''?null:+solde,vehicule:$('vehicule').value.trim(),litresMan:$('litresMan').value===''?null:+$('litresMan').value,pompiste:$('pompiste').value.trim(),imgA:imgs.A,imgB:imgs.B,synced:false,pdf:'',created:Date.now()};
+  ['station','produit','pu','vehicule'].forEach(k=>localStorage[k]=k==='pu'?pu:r[k]);
+  try{await putR(r)}catch(e){toast('Enregistrement impossible : espace de stockage insuffisant ou indisponible. Gardez le formulaire ouvert.');return}
+  resetForm();await render();toast(navigator.onLine?'Reçu enregistré.':'Reçu enregistré hors ligne. Envoi au retour d’Internet.');trySync();
+});
+
+/* ---------- Affichage ---------- */
+async function render(){
+  const list=(await allR()).sort((a,b)=>(b.date+b.heure).localeCompare(a.date+a.heure));
+  let remote=null;try{remote=JSON.parse(localStorage.sharedBalance||'null')}catch(e){}
+  const local=list.find(r=>r.solde!=null);
+  const stamp=r=>(r.date||'')+(r.heure||'');
+  const withSolde=remote&&remote.solde!=null&&(!local||stamp(remote)>stamp(local))?remote:local;
+  if(withSolde){
+    const pu=withSolde.pu||+localStorage.pu||DEF.pu;
+    $('hSolde').textContent=fmt(withSolde.solde);
+    $('hLitres').textContent=fmt(withSolde.solde/pu,1);
+    $('hInfo').textContent=`Dernier relevé : ${withSolde.date.split('-').reverse().join('/')} à ${withSolde.heure} (${fmt(pu)} FCFA/L)`;
+  }
+  const el=$('list');
+  el.innerHTML=list.length?'':'<div class="empty">Aucun reçu pour le moment. Photographiez le ticket thermique pour commencer.</div>';
+  list.forEach(r=>{
+    const d=document.createElement('div');d.className='item';
+    d.innerHTML=`<div><strong>${fmt(r.montant)} FCFA · ${fmt(r.litres,2)} L</strong><br><small style="color:var(--mute)">${r.date.split('-').reverse().join('/')} ${r.heure} · ${r.vehicule||'véhicule ?'} · n° ${r.ticket||'—'}</small></div><span class="tag ${r.synced?'done':'wait'}">${r.synced?'Archivé':'En attente'}</span>`;
+    if(r.synced&&r.pdf){d.querySelector('strong').outerHTML=`<a href="${r.pdf}" target="_blank" rel="noopener" style="color:inherit"><strong>${fmt(r.montant)} FCFA · ${fmt(r.litres,2)} L</strong></a>`}
+    el.appendChild(d);
+  });
+}
+
+/* ---------- Synchronisation ---------- */
+let syncing=false;
+async function trySync(manual){
+  const url=localStorage.cfgUrl;
+  if(!url){if(manual)toast('Renseignez les réglages Google.');return}
+  if(!navigator.onLine){if(manual)toast('Hors ligne : synchronisation reportée.');return}
+  if(syncing)return;syncing=true;let ok=0,ko=0;
+  try{
+    for(const r of (await allR()).filter(x=>!x.synced)){
+      try{
+        const res=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(r),signal:AbortSignal.timeout(60000)});
+        const j=await res.json();
+        if(j.ok){r.synced=true;r.pdf=j.pdf||'';await putR(r);ok++}else{ko++;if(manual)toast('Erreur : '+j.error)}
+      }catch(e){ko++}
+    }
+    await refreshBalance(url);
+  }finally{syncing=false}
+  await render();
+  if(ok)toast(`${ok} reçu(s) archivé(s) dans Drive et Sheets.`);else if(ko&&manual)toast('Échec de la synchronisation. Réessayez avec du réseau.');else if(manual)toast('Tout est déjà à jour.');
+}
+$('sync').addEventListener('click',()=>trySync(true));
+addEventListener('online',()=>{netState();trySync()});addEventListener('offline',netState);
+function netState(){$('hNet').textContent=navigator.onLine?'En ligne':'Hors ligne'}
+
+async function refreshBalance(url){
+  try{
+    const res=await fetch(url,{cache:'no-store',signal:AbortSignal.timeout(20000)});
+    const data=await res.json();
+    if(data.ok&&data.solde!=null&&Number.isFinite(Number(data.solde))){
+      localStorage.sharedBalance=JSON.stringify(data);
+    }
+  }catch(e){} // Le dernier relevé reste accessible hors ligne.
+}
+setInterval(()=>{if(navigator.onLine)trySync()},30000);
+addEventListener('focus',()=>trySync());
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)trySync()});
+/* ---------- Réglages ---------- */
+$('cfgUrl').value=localStorage.cfgUrl||'';localStorage.removeItem('cfgTok');
+$('cfgSave').addEventListener('click',()=>{localStorage.cfgUrl=$('cfgUrl').value.trim();toast('Réglages enregistrés.');trySync()});
+
+
+/* ---------- Lecture automatique du ticket (OCR local, Tesseract.js) ---------- */
+let workerP=null,onProg=()=>{};
+function getWorker(){
+  if(typeof Tesseract==='undefined')return Promise.reject(new Error('moteur absent'));
+  if(!workerP)workerP=Tesseract.createWorker('eng',1,{workerPath:'vendor/worker.min.js',corePath:'vendor/',langPath:'vendor/lang',logger:m=>onProg(m)})
+    .then(async w=>{await w.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1'});localStorage.ocrReady=1;return w})
+    .catch(e=>{workerP=null;throw e});
+  return workerP;
+}
+function loadImg(src){return new Promise((ok,ko)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=ko;i.src=src})}
+async function prep(src){ // niveaux de gris + étirement du contraste
+  const im=await loadImg(src),c=document.createElement('canvas');c.width=im.width;c.height=im.height;
+  const x=c.getContext('2d');x.drawImage(im,0,0);const d=x.getImageData(0,0,c.width,c.height),p=d.data,h=new Uint32Array(256);
+  for(let i=0;i<p.length;i+=4){const g=(p[i]*.3+p[i+1]*.59+p[i+2]*.11)|0;p[i]=g;h[g]++}
+  const n=c.width*c.height;let lo=0,hi=255,s=0;while(lo<254&&(s+=h[lo])<n*.01)lo++;s=0;while(hi>1&&(s+=h[hi])<n*.01)hi--;
+  const k=255/Math.max(1,hi-lo);for(let i=0;i<p.length;i+=4){const v=Math.max(0,Math.min(255,(p[i]-lo)*k));p[i]=p[i+1]=p[i+2]=v}
+  x.putImageData(d,0,0);return c;
+}
+const num=s=>+String(s).replace(/[\s.,]/g,'');
+const cap=s=>s.toLowerCase().replace(/(^|[\s'-])(\p{L})/gu,(m,a,b)=>a+b.toUpperCase());
+function parseTicket(raw){
+  const T=raw.toUpperCase().replace(/\|/g,'1'),o={};let m;
+  if(m=T.match(/(\d{2})\/(\d{2})\/(20\d{2})\s+(\d{2})[:.](\d{2})/)){o.date=`${m[3]}-${m[2]}-${m[1]}`;o.heure=`${m[4]}:${m[5]}`}
+  if(m=T.match(/POMPE\s*:?\s*(\d{1,2})\b/))o.pompe=m[1];
+  if(m=T.match(/CHRONO\s*:?\s*(\d{3,5})\s*\/\s*(\d{3,5})/))o.ticket=m[1]+'/'+m[2];
+  if(m=T.match(/UNITAIRE\s*:?\s*(\d{3,4})/))o.pu=+m[1];
+  if(m=T.match(/TOTAL\s*:?\s*(\d[\d\s.,]*?)\s*CFA/))o.montant=num(m[1]);
+  if(m=T.match(/(SUPER[A-Z ]*?|GASOIL[A-Z ]*?|GAZOLE[A-Z ]*?)\s+(\d{1,3}[.,]\d{1,3})\s+(\d{3,6})/)){o.produit=cap(m[1].trim()).replace(/ Sp$/,' SP');o.litres=+m[2].replace(',','.');if(!o.montant)o.montant=+m[3]}
+  if(m=T.match(/POMPISTE\s*:?\s*([A-Z' -]{3,40})/))o.pompiste=cap(m[1].trim());
+  if(m=T.match(/SOLDE\s*:?\s*(\d[\d\s.,]*?)\s*CFA/))o.solde=num(m[1]);
+  if(o.montant&&o.pu&&(!o.litres||Math.abs(o.litres-o.montant/o.pu)/(o.montant/o.pu)>.03))o.litres=+(o.montant/o.pu).toFixed(2);
+  return o;
+}
+function applyOcr(o){
+  const map={date:'date',heure:'heure',pompe:'pompe',ticket:'ticket',pu:'pu',montant:'montant',litres:'litres',produit:'produit',pompiste:'pompiste',solde:'solde'};
+  let n=0;
+  for(const k in map){if(o[k]==null||o[k]==='')continue;const el=$(map[k]);el.value=o[k];el.classList.add('auto');el.addEventListener('input',()=>el.classList.remove('auto'),{once:true});n++}
+  if(o.litres!=null)$('litres').dataset.touched=1;
+  return n;
+}
+let ocrBusy=false;
+async function runOcr(){
+  const st=$('ocrA');if(!imgs.A||ocrBusy)return;ocrBusy=true;st.className='ocrstat';st.textContent='Lecture du ticket…';
+  onProg=m=>{if(m.status==='recognizing text')st.textContent=`Lecture du ticket… ${Math.round(m.progress*100)} %`;else if(/loading/.test(m.status||''))st.textContent='Préparation du moteur de lecture…'};
+  try{
+    const w=await getWorker(),cv=await prep(imgs.A),{data}=await w.recognize(cv);
+    const o=parseTicket(data.text||''),n=applyOcr(o);
+    if(n>=4){st.className='ocrstat ok';st.textContent=`${n} champs lus (surlignés en jaune). Vérifiez-les avant d’enregistrer.`}
+    else if(n>0){st.className='ocrstat bad';st.textContent=`Lecture partielle (${n} champs). Complétez les champs manquants. Une photo bien droite et bien éclairée aide.`}
+    else{st.className='ocrstat bad';st.textContent='Ticket illisible. Refaites la photo (à plat, sans ombre) ou saisissez à la main.'}
+  }catch(e){st.className='ocrstat bad';st.textContent='Moteur de lecture indisponible. Ouvrez l’application une fois avec du réseau, ou saisissez à la main.'}
+  finally{ocrBusy=false}
+}
+$('reread').addEventListener('click',runOcr);
+// Télécharge le moteur en arrière-plan dès qu'il y a du réseau, pour qu'il marche ensuite hors ligne
+function warm(){if(!localStorage.ocrReady&&navigator.onLine)getWorker().then(()=>toast('Lecture automatique prête, même hors ligne.')).catch(()=>{})}
+addEventListener('load',()=>setTimeout(warm,2500));addEventListener('online',()=>setTimeout(warm,1500));
+
+resetForm();render();netState();trySync();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').then(()=>navigator.serviceWorker.ready).then(()=>toast('Application prête pour une utilisation hors ligne.')).catch(()=>toast('Préparation hors ligne incomplète : gardez Internet et rechargez.'));
+</script>
+</body>
+</html>
