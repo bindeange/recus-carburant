@@ -103,7 +103,7 @@ summary{cursor:pointer;font-weight:600}
       <div><label for="montant">Montant (FCFA)</label><input type="number" id="montant" inputmode="numeric"></div>
       <div><label for="litres">Litres</label><input type="number" id="litres" inputmode="decimal" step="0.01"></div>
     </div>
-    <label for="solde">Solde après achat (FCFA)</label><input type="number" id="solde" inputmode="numeric">
+    <label for="solde">Solde après achat (FCFA)</label><input type="number" id="solde" inputmode="numeric"><div id="soldeHint" class="ocrstat" aria-live="polite"></div><button type="button" id="estimateSolde" class="alt" style="margin-top:6px">Estimer depuis les reçus connus</button>
     <div class="row">
       <div><label for="vehicule">Véhicule</label><input type="text" id="vehicule"></div>
       <div><label for="litresMan">Litres (reçu manuscrit)</label><input type="number" id="litresMan" inputmode="decimal" step="0.001"></div>
@@ -123,6 +123,7 @@ summary{cursor:pointer;font-weight:600}
     </div>
   </details>
 </main>
+<script src="balance.js" defer></script>
 <script src="ocr.js" defer></script>
 <script src="vendor/tesseract.min.js" defer></script>
 <div id="toast" role="status"></div>
@@ -141,7 +142,7 @@ const putR=r=>tx('readwrite',s=>s.put(r)),allR=()=>tx('readonly',s=>s.getAll()),
 const fmt=(n,d=0)=>Number(n).toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d});
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');clearTimeout(toast.h);toast.h=setTimeout(()=>t.classList.remove('on'),2600)}
 function compress(file,max=1500,quality=.72){return new Promise(ok=>{const img=new Image();img.onload=()=>{const k=Math.min(1,max/Math.max(img.width,img.height));const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(img.src);ok(c.toDataURL('image/jpeg',quality))};img.src=URL.createObjectURL(file)})}
-const imgs={A:null,B:null};let ocrPhoto=null;
+const imgs={A:null,B:null};let ocrPhoto=null;let balanceSource="saisi",balanceBasis=null,estimateSequence=0;
 function showPrev(k){const box=$('prev'+k);box.querySelector('img')?.remove();const im=document.createElement('img');im.src=imgs[k];im.alt=k==='A'?'Ticket thermique':'Reçu manuscrit';box.appendChild(im)}
 document.querySelectorAll('input[data-k]').forEach(inp=>inp.addEventListener('change',async e=>{
   const f=e.target.files[0];e.target.value='';if(!f)return;const k=inp.dataset.k;
@@ -151,6 +152,7 @@ document.querySelectorAll('input[data-k]').forEach(inp=>inp.addEventListener('ch
 
 /* ---------- Formulaire ---------- */
 function resetForm(){
+  balanceSource="saisi";balanceBasis=null;estimateSequence++;$("soldeHint").textContent="";
   const n=new Date(),p=x=>String(x).padStart(2,'0');
   $('date').value=`${n.getFullYear()}-${p(n.getMonth()+1)}-${p(n.getDate())}`;
   $('heure').value=`${p(n.getHours())}:${p(n.getMinutes())}`;
@@ -174,11 +176,25 @@ $('save').addEventListener('click',async()=>{
   const montant=+$('montant').value,solde=$('solde').value;
   if(!montant||!$('litres').value) return toast('Montant et litres sont obligatoires.');
   const pu=+$('pu').value||0;
-  const r={id:crypto.randomUUID(),date:$('date').value,heure:$('heure').value,station:$('station').value.trim(),pompe:$('pompe').value.trim(),ticket:$('ticket').value.trim(),produit:$('produit').value.trim(),pu,montant,litres:+$('litres').value,solde:solde===''?null:+solde,vehicule:$('vehicule').value.trim(),litresMan:$('litresMan').value===''?null:+$('litresMan').value,pompiste:$('pompiste').value.trim(),imgA:imgs.A,imgB:imgs.B,synced:false,pdf:'',created:Date.now()};
+  const r={id:crypto.randomUUID(),date:$('date').value,heure:$('heure').value,station:$('station').value.trim(),pompe:$('pompe').value.trim(),ticket:$('ticket').value.trim(),produit:$('produit').value.trim(),pu,montant,litres:+$('litres').value,solde:solde===''?null:+solde,soldeSource:balanceSource,soldeBasis:balanceBasis,vehicule:$('vehicule').value.trim(),litresMan:$('litresMan').value===''?null:+$('litresMan').value,pompiste:$('pompiste').value.trim(),imgA:imgs.A,imgB:imgs.B,synced:false,pdf:'',created:Date.now()};
   ['station','produit','pu','vehicule'].forEach(k=>localStorage[k]=k==='pu'?pu:r[k]);
   try{await putR(r)}catch(e){toast('Enregistrement impossible : espace de stockage insuffisant ou indisponible. Gardez le formulaire ouvert.');return}
   resetForm();await render();toast(navigator.onLine?'Reçu enregistré.':'Reçu enregistré hors ligne. Envoi au retour d’Internet.');trySync();
 });
+
+
+async function estimateSolde(force=false){
+ if(ocrBusy)return;const sequence=++estimateSequence;
+ if(!force&&$('solde').value!==''&&balanceSource!=='estime')return;
+ let remote=null;try{remote=JSON.parse(localStorage.sharedBalance||'null')}catch(e){}
+ const result=ReceiptBalance.estimate(await allR(),{id:'draft',date:$('date').value,heure:$('heure').value,montant:Number($('montant').value),pu:Number($('pu').value)},remote);
+ if(sequence!==estimateSequence)return;
+ if(!result){if(balanceSource==='estime')$('solde').value='';balanceSource='saisi';balanceBasis=null;$('soldeHint').textContent='Estimation indisponible : vérifiez la date, le montant et le dernier solde connu.';return;}
+ $('solde').value=result.solde;balanceSource='estime';balanceBasis={id:result.baseId,solde:result.baseSolde,debit:result.debit};$('solde').classList.add('uncertain');$('soldeHint').textContent='Solde estimé : '+fmt(result.baseSolde)+' − '+fmt(result.debit)+' = '+fmt(result.solde)+' FCFA, selon les reçus connus. Vérifiez les achats ou recharges manquants.';
+}
+$('estimateSolde').addEventListener('click',()=>estimateSolde(true));
+$('solde').addEventListener('input',()=>{estimateSequence++;balanceSource='saisi';balanceBasis=null;$('soldeHint').textContent='Solde saisi manuellement.';});
+['montant','date','heure'].forEach(k=>$(k).addEventListener('input',()=>{if(balanceSource==='estime')estimateSolde();}));
 
 /* ---------- Affichage ---------- */
 async function render(){
@@ -186,12 +202,12 @@ async function render(){
   let remote=null;try{remote=JSON.parse(localStorage.sharedBalance||'null')}catch(e){}
   const local=list.find(r=>r.solde!=null);
   const stamp=r=>(r.date||'')+(r.heure||'');
-  const withSolde=remote&&remote.solde!=null&&(!local||stamp(remote)>stamp(local))?remote:local;
+  const withSolde=remote&&remote.solde!=null&&(!local||(stamp(remote)>stamp(local)||(stamp(remote)===stamp(local)&&local.synced)))?remote:local;
   if(withSolde){
     const pu=withSolde.pu||+localStorage.pu||DEF.pu;
     $('hSolde').textContent=fmt(withSolde.solde);
     $('hLitres').textContent=fmt(withSolde.solde/pu,1);
-    $('hInfo').textContent=`Dernier relevé : ${withSolde.date.split('-').reverse().join('/')} à ${withSolde.heure} (${fmt(pu)} FCFA/L)`;
+    $('hInfo').textContent=`${withSolde.soldeSource==='estime'?'Solde estimé (achats connus)':'Solde relevé'} : ${withSolde.date.split('-').reverse().join('/')} à ${withSolde.heure} (${fmt(pu)} FCFA/L)`;
   }
   const el=$('list');
   el.innerHTML=list.length?'':'<div class="empty">Aucun reçu pour le moment. Photographiez le ticket thermique pour commencer.</div>';
@@ -215,7 +231,7 @@ async function trySync(manual){
       try{
         const res=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(r),signal:AbortSignal.timeout(60000)});
         const j=await res.json();
-        if(j.ok){r.synced=true;r.pdf=j.pdf||'';await putR(r);ok++}else{ko++;if(manual)toast('Erreur : '+j.error)}
+        if(j.ok){r.synced=true;r.pdf=j.pdf||'';if(j.solde!=null){r.solde=j.solde;r.soldeSource=j.soldeSource||r.soldeSource;}await putR(r);ok++}else{ko++;if(manual)toast('Erreur : '+j.error)}
       }catch(e){ko++}
     }
     await refreshBalance(url);
@@ -268,7 +284,7 @@ async function prep(src){
  // Le ticket TotalEnergies comporte un logo en haut et un message en pied.
  // Une seconde lecture complète reste disponible si le recadrage rate un champ.
  const area=box.detected?{x:Math.round(box.x+box.width*.043),y:Math.round(box.y+box.height*.168),width:Math.round(box.width*.862),height:Math.round(box.height*.599)}:full;
- return{color:make(area,'color'),gray:make(area,'gray'),binary:()=>make(area,'binary'),full:()=>make(full,'gray'),cropped:box.detected};
+ return{color:make(area,'color'),gray:make(area,'gray'),binary:()=>make(area,'binary'),full:()=>make(full,'gray'),cropped:box.detected,balance:()=>make({x:0,y:Math.round(im.height*.54),width:im.width,height:Math.round(im.height*.31)},'gray')};
 }
 function parseTicket(raw){return ReceiptOCR.parse(raw)}
 function applyOcr(o,snapshot){
@@ -290,10 +306,12 @@ async function runOcr(){
   const worker=await getWorker(),cv=await prep(source),readings=[];
   async function read(image,mode){pass++;st.textContent='Lecture '+pass+' du ticket…';await worker.setParameters({tessedit_pageseg_mode:String(mode)});const {data}=await worker.recognize(image);readings.push({text:data.text||'',confidence:data.confidence||0,mode});return ReceiptOCR.merge(readings);}
   await read(cv.color,6);await read(cv.gray,6);let result=await read(cv.color,11);
+  if(result.fields.solde==null)result=await read(cv.balance(),6);
   const essentials=['date','heure','ticket','montant','pu','solde'];
   if(essentials.some(k=>result.fields[k]==null))result=await read(cv.binary(),6);
   if(cv.cropped&&essentials.some(k=>result.fields[k]==null))result=await read(cv.full(),6);
   if((ocrPhoto||imgs.A)!==source)return;
+  if(result.fields.solde!=null){balanceSource='lu';balanceBasis=null;$('soldeHint').textContent='Solde lu sur le ticket. Vérifiez-le sur la photo.';}
   const n=applyOcr(result.fields,snapshot),labels={date:'date',heure:'heure',pompe:'pompe',ticket:'n° du ticket',produit:'produit',pu:'prix unitaire',montant:'montant',litres:'litres',solde:'solde',pompiste:'pompiste'};
   // Une date de saisie ne doit pas être prise pour la date d’un ticket illisible.
   for(const k of result.missing){const el=$(k);if(!el)continue;if(el.value===snapshot[k])el.value='';el.classList.add('uncertain');el.addEventListener('input',()=>el.classList.remove('uncertain'),{once:true});}
@@ -305,7 +323,7 @@ async function runOcr(){
  }catch(e){
   for(const k of ['date','heure']){if($(k).value===snapshot[k])$(k).value='';$(k).classList.add('uncertain');}
   st.className='ocrstat bad';st.textContent='Lecture indisponible. Saisissez les valeurs du ticket, dont sa date et son heure, ou reprenez une photo plus nette.';
- }finally{ocrBusy=false;$('save').disabled=false;document.querySelectorAll('input[data-k="A"]').forEach(e=>e.disabled=false);}
+ }finally{ocrBusy=false;$('save').disabled=false;document.querySelectorAll('input[data-k="A"]').forEach(e=>e.disabled=false);if(!$('solde').value&&$('montant').value)await estimateSolde();}
 }
 $('reread').addEventListener('click',runOcr);
 // Télécharge le moteur en arrière-plan dès qu'il y a du réseau, pour qu'il marche ensuite hors ligne

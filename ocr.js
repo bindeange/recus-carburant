@@ -42,7 +42,7 @@ function parse(raw){
  if(m=T.match(/CHR[O0][MN]O\s*[:;.=\-]?\s*(\d{3,8})\s*[\/]\s*(\d{3,8})\b/))o.ticket=m[1]+'/'+m[2];
  if(m=T.match(/UN[I1L]TA[I1L]RE\s*[:;.=\-]?\s*(\d{3,4})\b/)){const v=+m[1];if(v>=100&&v<=5000)o.pu=v;}
  if(m=T.match(/\bTOTAL\s*[:;.=\-]?\s*(\d[\d \t.,]{1,14})\s*CF[A4]/))o.montant=+m[1].replace(/\D/g,'');
- if(m=T.match(/\bSOLDE\s*[:;.=\-]?\s*(\d[\d \t.,]{0,14})\s*CF[A4]/))o.solde=+m[1].replace(/\D/g,'');
+ if(m=T.match(/\bS[O0]L[D0][E3]\s*[:;.=\-]?\s*(\d[\d \t.,]{0,14})\s*CF[A4]/))o.solde=+m[1].replace(/\D/g,'');
  if(m=T.match(/\b(SUPER\s*SP|SUPER|GASOIL|GAZOLE)\b/)){
   o.produit=/SUPER/.test(m[1])?'Super SP':title(m[1]);
   const after=T.slice(m.index+m[0].length,m.index+m[0].length+85);
